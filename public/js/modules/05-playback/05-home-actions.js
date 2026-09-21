@@ -8,6 +8,8 @@ function songFromListenRecord(record) {
     source: provider,
     type: record.type || (provider === 'qq' ? 'qq' : 'song'),
     id: record.id || record.mid || record.key || '',
+    localKey: record.localKey || record.localFileId || '',
+    localFileId: record.localFileId || record.localKey || '',
     mid: record.mid || '',
     songmid: record.mid || '',
     mediaMid: record.mediaMid || '',
@@ -23,7 +25,17 @@ async function playHomeRecent(record) {
     return;
   }
   var song = songFromListenRecord(record);
-  if (!song || (!song.id && !song.mid)) {
+  var localRecord = !!(record && (record.type === 'local' || record.sourceKey === 'local' || record.localKey || record.localFileId || /^local:/.test(String(record.key || record.id || ''))));
+  if (localRecord) {
+    var localId = String(record.localFileId || record.localKey || record.id || record.key || '').replace(/^local:/, '');
+    song.type = 'local';
+    song.source = 'local';
+    song.provider = 'local';
+    song.localKey = localId;
+    song.localFileId = localId;
+    song.id = 'local:' + localId;
+  }
+  if (!song || (!song.id && !song.mid && !song.localFileId)) {
     runHomeSearch(record.name || '');
     return;
   }

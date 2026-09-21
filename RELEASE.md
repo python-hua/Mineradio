@@ -1,46 +1,63 @@
-# Mineradio 2.2.0 发布流程
+# Mineradio 2.2.4 维护分支发布流程
 
 ## 发布边界
 
-- 正式版本：`2.2.0`
-- Git tag：`v2.2.0`
-- Release 标题：`Mineradio 2.2.0`
-- 安装包：`Mineradio-2.2.0-Setup.exe`
+> 重要说明：本发布仅为基于 GPL-3.0 许可的当前源码分支/维护版本，不是原作者在其官方仓库中的新官方发布。原始官方仓库为 <https://github.com/XxHuberrr/Mineradio>，其仓库主页已声明原作者永久停止更新。当前维护分支编号为 `2.2.4`，用于区分本仓库编译产物；非本仓库分发的版本仍保留原作者的 `2.2.0` 版本标识，仅在原作者官方渠道或其源仓库中作为参考。
+
+- 维护分支版本：`2.2.4`
+- 原作者官方版本：`2.2.0`（仅用于保留原作者渠道中的历史版本标识，不代表当前维护分支官方发布）
+- Git tag：`v2.2.4`
+- Release 标题：`Mineradio 2.2.4 (维护分支)`
+- 安装包：`Mineradio-2.2.4-Setup.exe`
 - 仅从当前可信源码完整构建，不复用旧安装包或旧 `dist/`。
 - 正式 Release 不混入 Mineradio_Beat 产物。
-- GitHub Release 附带完整安装包 `Mineradio-2.2.0-Setup.exe` 和最小版本说明 `latest.yml`。后者供旧版主检测失败时的备用线路使用；不上传 blockmap 或补丁。
+- GitHub Release 附带完整安装包 `Mineradio-2.2.4-Setup.exe` 和最小版本说明 `latest.yml`。后者供旧版主检测失败时的备用线路使用；不上传 blockmap 或补丁。
 - `2.0.3+` 客户端不得从 Release assets 识别或下载安装包，软件内更新仍只读取正文中的网盘线路。
 - Release 正文使用两条 `mineradio-download-page` 隐藏标记提供本次下载入口，保留百度云链接中的提取码参数。
 
+## 版本基线
+
+当前维护分支源码版本已提升为 `2.2.4`，并且与当前功能修复状态保持一致。打包逻辑仍读取 `package.json` 中的版本值，Electron Builder 构建时会带出该版本号；构建前请确保 `dist/` 已清空，并确认没有残留的旧安装包被重新命名或误用。
+
 ## 网盘分发
 
-本次下载入口已更换，请使用以下新网盘链接，并更新旧收藏。通过公告中的网盘入口下载，也是在支持 Mineradio 的持续更新。
+本次下载入口需在发布前再次确认，使用当前可用的官方链接并更新旧收藏。通过公告中的网盘入口下载，也是在支持 Mineradio 的持续更新。
 
-- 夸克盘：[下载 Mineradio 2.2.0](https://pan.quark.cn/s/4b124d3e81d3)
-- 百度云：[下载 Mineradio 2.2.0](https://pan.baidu.com/s/17CwpHUza67w_Grgc3s5nOw?pwd=SJHP)（提取码 `SJHP`）
+- 夸克盘：[下载 Mineradio 2.2.4 维护分支](https://pan.quark.cn/s/4b124d3e81d3)
+- 百度云：[下载 Mineradio 2.2.4 维护分支](https://pan.baidu.com/s/17CwpHUza67w_Grgc3s5nOw?pwd=SJHP)（提取码 `SJHP`）
 
 <!-- mineradio-download-page: 夸克盘|https://pan.quark.cn/s/4b124d3e81d3 -->
 <!-- mineradio-download-page: 百度云|https://pan.baidu.com/s/17CwpHUza67w_Grgc3s5nOw?pwd=SJHP -->
 
 ## 公开更新说明
 
-- 本次下载入口已更换，请使用公告中的新网盘链接，并更新旧收藏。
-- 修复音乐接口的登录、账号识别与播放稳定性问题。
-- 改善歌单加载、搜索分页，以及网络异常后的恢复。
-- 新增粒子预设与更多手势操作，改善日常播放体验。
+- 修复本地音乐播放时“本地文件已失效，请重新导入”的误报问题：点击最近播放、点击音乐库后再继续播放这两条入口已补上本地库恢复兜底。
+- 修复本地音乐在记录已删除后仍残留在列表和队列中的问题，导入的本地音乐库会在加载时剔除失效文件。
+- 搜索功能已支持本地音乐优先显示：搜索时会先合并本地命中结果，再按原有联网结果排序，避免本地音乐被网络结果压住。
+- 优化本地音乐恢复逻辑，确保断开重启或切换界面后依然能从持久化库中重新补全 `localUrl` 和播放状态。
+- 修复本地音乐因编码问题导致的乱码问题：本地文件的内嵌歌词、同名 LRC、GB18030 与 UTF-8 修正后的元数据会按统一规则解析，避免标题、歌手、专辑和歌词因编码异常导致的乱码、缺失或匹配失败。
+- 维护分支版本号已同步到 `2.2.4`，并与当前修复内容和发布说明保持一致；原作者官方渠道中已保留 `2.2.0` 作为原始版本标识，不与当前维护分支混淆。
 
-## 发布资产
+## 构建与发布资产
 
-GitHub Release 上传 `dist/Mineradio-2.2.0-Setup.exe` 和 `docs/update/latest.yml`。版本说明仅包含 `version/releaseDate`，不得使用带安装包下载字段的构建工具清单。构建生成的 blockmap、安装清单与校验记录仍只用于本地验收。
+GitHub Release 上传 `dist/Mineradio-2.2.4-Setup.exe` 和 `docs/update/latest.yml`。版本说明仅包含 `version/releaseDate`，不得使用带安装包下载字段的构建工具清单。构建生成的 blockmap、安装清单与校验记录仍只用于本地验收。
 
 2.1.0 的备用检测和入口限制见 [更新公告与旧版兼容](docs/UPDATE_DELIVERY.md)。每次发布都要同步版本说明；缺失会使主接口访问失败的旧客户端无法发现更新。
 
-安装包 SHA-256：`8fd318283bab2fe98190f7b879ede423dd8274a0aeec8d321570b8d022d4f989`。
+Windows 构建命令：
+
+- `npm install`
+- `npm run build:win`
+
+如需仅生成目录版安装包，可使用：
+
+- `npm run build:win:dir`
 
 ## 发布前检查
 
 - 运行完整回归检查与 Electron 启动检查。
 - 构建并检查 `win-unpacked/resources/app` 内容，核对正式版本、资源完整性和源码一致性。
 - 验证安装包启动、退出、重启和用户数据恢复。
+- 验证本地音乐导入、搜索本地结果优先、删除后自动清理和“最近播放/继续播放”恢复路径均正常。
 - 确认仓库与安装包不包含 Cookie、Token、凭据、缓存或本机日志。
 - 核对安装包 SHA-256，以及公告、README 和软件更新入口中的两条新网盘链接。

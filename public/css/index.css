@@ -2135,6 +2135,12 @@ body.empty-home-active.diy-mode #search-area:not(.has-results) #search-mode-tabs
   background: rgba(30, 215, 96, .085)
 }
 
+.tag-source.local {
+  color: #ffe1ae;
+  border-color: rgba(240, 177, 86, .34);
+  background: rgba(240, 177, 86, .085)
+}
+
 .search-result.qq-source:hover {
   background: rgba(191, 214, 107, .052)
 }

@@ -838,6 +838,20 @@ function playHomeNextFromDock() {
 }
 
 function openHomeDashboardLibrary() {
+  if (Array.isArray(persistentLocalLibraryTracks) && persistentLocalLibraryTracks.length) {
+    homeForcedOpen = false;
+    homeSuppressed = false;
+    if (typeof setHomeControlsLocked === 'function') setHomeControlsLocked(false);
+    playQueue = persistentLocalLibraryTracks.map(cloneSong);
+    currentIdx = -1;
+    currentLocalSong = null;
+    if (typeof switchPlaylistTab === 'function') {
+      switchPlaylistTab('queue', { save: false, refresh: false, animate: false });
+    }
+    if (typeof safeRenderQueuePanel === 'function') safeRenderQueuePanel('home-library-open');
+    if (typeof togglePlaylistPanel === 'function') togglePlaylistPanel(true);
+    return;
+  }
   var loggedIn = typeof hasAnyPlatformLogin === 'function' && hasAnyPlatformLogin()
     || homeDiscoverState && homeDiscoverState.loggedIn;
   if (loggedIn && typeof openHomeLibrary === 'function') {

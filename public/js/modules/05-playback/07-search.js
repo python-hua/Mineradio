@@ -437,6 +437,7 @@ document.addEventListener('click', function (e) {
 updateSearchModeTabs();
 
 function songProviderKey(song) {
+  if (song && (song.provider === 'local' || song.source === 'local' || song.type === 'local' || song.localKey || song.localFileId || song.localUrl)) return 'local';
   if (song && (song.provider === 'spotify' || song.source === 'spotify' || song.type === 'spotify' || song.spotifyId || song.spotifyUri)) return 'spotify';
   if (song && (song.provider === 'qq' || song.source === 'qq' || song.type === 'qq')) return 'qq';
   if (song && (song.provider === 'qishui' || song.source === 'qishui' || song.type === 'qishui')) return 'qishui';
@@ -445,9 +446,10 @@ function songProviderKey(song) {
 }
 function songSourceTagHtml(song, opts) {
   opts = opts || {};
+  var isLocal = !!(song && (song.type === 'local' || song.source === 'local' || song.localKey || song.localFileId || song.localUrl));
   var rawKey = song && (song.resolvedPlaybackProvider || song.playbackProvider || song.audioProvider || song.providerResolved || '');
-  var key = /^(netease|qq|kugou|qishui|spotify)$/.test(String(rawKey || '')) ? String(rawKey) : songProviderKey(song);
-  var label = key === 'qq' ? 'QQ' : (key === 'kugou' ? 'KG' : (key === 'qishui' ? 'QS' : (key === 'spotify' ? 'SP' : 'NE')));
+  var key = isLocal ? 'local' : (/^(netease|qq|kugou|qishui|spotify)$/.test(String(rawKey || '')) ? String(rawKey) : songProviderKey(song));
+  var label = key === 'local' ? 'LOCAL' : (key === 'qq' ? 'QQ' : (key === 'kugou' ? 'KG' : (key === 'qishui' ? 'QS' : (key === 'spotify' ? 'SP' : 'NE'))));
   if (opts.switcher) {
     return '<button type="button" class="tag-source ' + key + ' control-source-chip" title="切换音源" aria-haspopup="true" onclick="toggleControlSourceSwitcher(event)">' + label + '</button>';
   }
@@ -733,7 +735,7 @@ function searchResultMetaHtml(song, index) {
   if (songProviderKey(song) === 'qishui' && !song.playable) bits.push('汽水匹配源，播放会自动换源');
   if (songProviderKey(song) === 'spotify' && !song.playable) bits.push('Spotify 匹配源，播放会自动换源');
   var tail = bits.length ? (' · ' + escHtml(bits.join('  ·  '))) : '';
-  if (!artist) return escHtml(searchResultMetaText(song));
+  if (!artist || (song && (song.type === 'local' || song.source === 'local' || song.localKey || song.localFileId || song.localUrl))) return escHtml(searchResultMetaText(song));
   return '<button class="search-artist-link" type="button" onclick="event.stopPropagation();openSearchResultArtist(' + index + ')">' + escHtml(artist) + '</button>' + tail;
 }
 function openSearchResultArtist(index) {
@@ -1010,10 +1012,29 @@ function scoreSongSearchResult(song, q, sourceIndex) {
   if (song && song.playable === false) score -= 6;
   return score;
 }
+function localSearchSongs(q) {
+  var tokens = searchQueryTokens(q);
+  if (!tokens.length || !Array.isArray(persistentLocalLibraryTracks)) return [];
+  return persistentLocalLibraryTracks.map(function (song, index) {
+    if (!song || !song.name) return null;
+    var coverage = searchTokenCoverage(tokens, song);
+    if (coverage.matched !== coverage.total) return null;
+    var local = cloneSong(song);
+    local._searchScore = scoreSongSearchResult(song, q, index) + 1000;
+    local._localSearchResult = true;
+    return local;
+  }).filter(Boolean).sort(function (a, b) {
+    return (b._searchScore || 0) - (a._searchScore || 0);
+  });
+}
 function mergeSongSearchResults(neteaseSongs, qqSongs, kugouSongs, qishuiSongs, spotifySongs, limit, q) {
-  var out = [];
+  var out = localSearchSongs(q);
   var providerSeen = {};
   var canonicalSeen = {};
+  out.forEach(function (song) {
+    var key = 'local:' + (song.localFileId || song.localKey || song.name + '|' + song.artist);
+    providerSeen[key] = true;
+  });
   function push(song, sourceIndex) {
     if (!song || !song.name) return;
     var key = songProviderKey(song) + ':' + (song.mid || song.id || (song.name + '|' + song.artist));
@@ -1064,7 +1085,7 @@ async function fetchMusicSearchResults(q, mode, previousPages) {
   var providers = activeSearchProvidersForMode(mode);
   if (!providers.length) {
     searchProviderNotice = searchProviderLoginNotice(mode);
-    return { songs: [], providerPages: {}, hasMore: false };
+    return { songs: localSearchSongs(q), providerPages: {}, hasMore: false };
   }
   previousPages = previousPages && typeof previousPages === 'object' ? previousPages : null;
   var providerPages = {};
@@ -1126,7 +1147,7 @@ async function fetchMusicSearchResults(q, mode, previousPages) {
 function searchSongResultHtml(s, i) {
     var vipTag = songVipTagHtml(s);
     var sourceTag = songSourceTagHtml(s);
-    var sourceClass = songProviderKey(s) + '-source';
+    var sourceClass = (s && (s.type === 'local' || s.source === 'local' || s.localKey || s.localFileId || s.localUrl) ? 'local' : songProviderKey(s)) + '-source';
     var thumb = songCoverSrc(s, 80);
     var imgTag = thumb
       ? '<img src="' + thumb + '" alt="" loading="lazy" onerror="this.style.opacity=0.2">'

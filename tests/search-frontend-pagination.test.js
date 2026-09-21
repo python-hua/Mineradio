@@ -227,3 +227,23 @@ test('search pagination carries provider offsets and ignores stale sessions', ()
   assert.doesNotMatch(scoreSource, /provider\s*===|searchIntentPrefersQQ/,
     'ordinary relevance must not contain platform-specific score boosts');
 });
+
+test('local library matches are returned before remote search results', () => {
+  const sandbox = {
+    persistentLocalLibraryTracks: [
+      { type: 'local', localFileId: 'first', name: '晴天', artist: '周杰伦', localUrl: 'mineradio-local://first' },
+      { type: 'local', localFileId: 'second', name: '夜曲', artist: '周杰伦', localUrl: 'mineradio-local://second' },
+    ],
+  };
+  vm.runInNewContext(functionBundle(['localSearchSongs'], `
+    function searchQueryTokens() { return ['晴天']; }
+    function searchTokenCoverage(tokens, song) { return { matched: song.name === '晴天' ? 1 : 0, total: tokens.length }; }
+    function scoreSongSearchResult(song) { return song.name === '晴天' ? 1 : 0; }
+    function cloneSong(song) { return Object.assign({}, song); }
+  `, 'this.findLocal = localSearchSongs;'), sandbox);
+  const matches = sandbox.findLocal('晴天');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].name, '晴天');
+  assert.equal(matches[0]._localSearchResult, true);
+  assert.equal(matches[0].localUrl, 'mineradio-local://first');
+});

@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('desktopWindow', {
   },
   listLocalMusicLibrary: () => ipcRenderer.invoke('mineradio-local-library-list'),
   readLocalMusicLyric: (localFileId) => ipcRenderer.invoke('mineradio-local-library-lyric', String(localFileId || '')),
+  writeLocalMusicLyric: (localFileId, lyric) => ipcRenderer.invoke('mineradio-local-library-lyric-write', String(localFileId || ''), String(lyric || '')),
   listBuiltInPlaylists: () => ipcRenderer.invoke('mineradio-built-in-playlists-list'),
   readBuiltInPlaylist: (id, options) => ipcRenderer.invoke('mineradio-built-in-playlist-page', String(id || ''), options || {}),
   createBuiltInPlaylist: (name) => ipcRenderer.invoke('mineradio-built-in-playlist-create', String(name || '')),

@@ -120,6 +120,7 @@ const { planCuefieldTransitionFromCache } = require('./cuefield/mineradio-bridge
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+let lrclibNextRequestAt = 0;
 const LOGIN_EASTER_EGG_GATE_FILE = String(process.env.MINERADIO_LOGIN_EASTER_EGG_GATE_FILE || '');
 const LOGIN_EASTER_EGG_GATE_VERSION = String(process.env.MINERADIO_LOGIN_EASTER_EGG_GATE_VERSION || 'world-peace-v1');
 const LOGIN_EASTER_EGG_PROTECTED_ROUTES = new Set([
@@ -841,6 +842,57 @@ async function fetchWithTimeout(url, opts, timeoutMs) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function handleLrclibLyric(trackName, artistName, albumName, duration) {
+  const track = String(trackName || '').trim();
+  const artist = String(artistName || '').trim();
+  if (!track || !artist) return { provider: 'lrclib', lyric: '', error: 'LRCLIB_TRACK_SIGNATURE_REQUIRED' };
+
+  const params = new URLSearchParams({ track_name: track, artist_name: artist });
+  const album = String(albumName || '').trim();
+  const seconds = Number(duration);
+  if (album) params.set('album_name', album);
+  if (Number.isFinite(seconds) && seconds >= 1 && seconds <= 3600) params.set('duration', String(Math.round(seconds)));
+
+  const waitMs = Math.max(0, lrclibNextRequestAt - Date.now());
+  if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  lrclibNextRequestAt = Date.now() + 300;
+
+  const requestLrclib = (query) => fetchWithTimeout('https://lrclib.net/api/get?' + query.toString(), {
+    headers: {
+      'User-Agent': `Mineradio/${APP_VERSION} (https://github.com/XxHuberrr/Mineradio)`,
+      Accept: 'application/json',
+    },
+  }, 6500);
+  let response = await requestLrclib(params);
+  let matchedWithoutDuration = false;
+  if (response.status === 404 && params.has('duration')) {
+    params.delete('duration');
+    response = await requestLrclib(params);
+    matchedWithoutDuration = response.ok;
+  }
+  if (response.status === 404) return { provider: 'lrclib', lyric: '', source: 'lrclib-empty' };
+  if (response.status === 429) {
+    const retryAfter = Number(response.headers.get('retry-after')) || 0;
+    lrclibNextRequestAt = Date.now() + Math.max(300, retryAfter * 1000);
+    const error = new Error('LRCLIB_RATE_LIMITED');
+    error.statusCode = 429;
+    error.retryAfter = retryAfter;
+    throw error;
+  }
+  if (!response.ok) throw new Error('LRCLIB_HTTP_' + response.status);
+  const body = await response.json();
+  const syncedLyrics = typeof body.syncedLyrics === 'string' ? body.syncedLyrics.trim() : '';
+  const plainLyrics = typeof body.plainLyrics === 'string' ? body.plainLyrics.trim() : '';
+  return {
+    provider: 'lrclib',
+    id: body.id || '',
+    lyric: syncedLyrics || plainLyrics,
+    source: syncedLyrics
+      ? (matchedWithoutDuration ? 'lrclib-synced-no-duration' : 'lrclib-synced')
+      : (plainLyrics ? (matchedWithoutDuration ? 'lrclib-plain-no-duration' : 'lrclib-plain') : 'lrclib-empty'),
+  };
 }
 function promiseWithTimeout(promise, timeoutMs, code) {
   let timer = null;
@@ -6402,6 +6454,28 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ---------- 歌词 ----------
+  if (pn === '/api/lrclib/lyric') {
+    try {
+      const result = await handleLrclibLyric(
+        url.searchParams.get('track_name'),
+        url.searchParams.get('artist_name'),
+        url.searchParams.get('album_name'),
+        url.searchParams.get('duration')
+      );
+      sendJSON(res, result);
+    } catch (err) {
+      console.error('[LrclibLyric]', err);
+      sendJSON(res, {
+        provider: 'lrclib',
+        lyric: '',
+        source: 'lrclib-error',
+        error: err.message,
+        retryAfter: Number(err.retryAfter) || 0,
+      }, Number(err.statusCode) || 502);
+    }
+    return;
+  }
+
   function lyricNodeText(body, key) {
     return body && body[key] && typeof body[key].lyric === 'string' ? body[key].lyric : '';
   }

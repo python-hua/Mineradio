@@ -545,6 +545,14 @@ async function togglePlay() {
       await playQueueAt(currentIdx, { manual: true });
       return;
     }
+    if ((!audio || !audio.src) && currentLocalSong && typeof restoreLocalQueueFromCurrentSong === 'function' && restoreLocalQueueFromCurrentSong()) {
+      await playQueueAt(currentIdx, { manual: true });
+      return;
+    }
+    if ((!audio || !audio.src) && currentLocalSong && typeof ensureCurrentLocalSongRestored === 'function' && !ensureCurrentLocalSongRestored()) {
+      showToast('上次播放的是本地文件，请重新导入后继续');
+      return;
+    }
     if (audio && audio.src && playQueue.length && currentIdx >= 0 && !playbackMediaMatchesCurrentQueueItem(audio)) {
       await playQueueAt(currentIdx, { manual: true, suppressPlayFailureNotice: true });
       return;

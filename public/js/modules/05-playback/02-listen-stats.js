@@ -163,6 +163,8 @@ function listenSongSnapshot(song) {
   return {
     key: queueItemKey(song),
     id: song.id || '',
+    localKey: song.localKey || '',
+    localFileId: song.localFileId || '',
     mid: song.mid || song.songmid || '',
     mediaMid: song.mediaMid || song.media_mid || '',
     hash: song.hash || song.fileHash || song.audioHash || '',

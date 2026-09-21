@@ -304,6 +304,7 @@ async function handleFiles(files, opts) {
       } catch (e) {
         persistenceFailed = true;
         console.warn('[LocalImport] persistent library unavailable, using this session only', e);
+        showToast('本地曲库保存失败：' + String(e && e.message || e || '未知错误').slice(0, 80));
       }
     }
     if (!songs || !songs.length) songs = audioFiles.map(localSongFromAudioFile);

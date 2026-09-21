@@ -6,10 +6,12 @@ const test = require('node:test');
 
 const {
   LocalMusicLibrary,
+  LOCAL_LYRIC_DIRECTORY,
   coverWithinBudget,
   decodeLyricBuffer,
   embeddedLyricText,
   localFileId,
+  normalizeMetadataText,
 } = require('../desktop/local-music-library');
 
 const ONE_PIXEL_PNG = Buffer.from(
@@ -170,6 +172,21 @@ test('subsequent imports append to the persistent library by default', async (t)
   assert.equal((await library.importFiles([{ path: '\\\\server\\share\\Blocked.flac' }])).error, 'NO_SUPPORTED_LOCAL_AUDIO');
 });
 
+test('deleted source files are pruned from the persistent library', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mineradio-local-library-prune-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const audioPath = path.join(root, 'Deleted.flac');
+  fs.writeFileSync(audioPath, Buffer.from('audio'));
+  const library = new LocalMusicLibrary({
+    userDataPath: path.join(root, 'profile'),
+    parseMetadata: async () => ({ common: { title: 'Deleted' }, format: { duration: 1 } }),
+  });
+  assert.equal((await library.importFiles([{ path: audioPath }])).count, 1);
+  fs.unlinkSync(audioPath);
+  assert.equal((await library.listTracks()).count, 0);
+  assert.equal(new LocalMusicLibrary({ userDataPath: path.join(root, 'profile') }).listTracksSync().count, 0);
+});
+
 test('GB18030 sidecar lyrics and synchronized embedded lyrics normalize to readable LRC', () => {
   const gb18030 = Buffer.concat([
     Buffer.from('[00:01.00]', 'ascii'),
@@ -184,6 +201,29 @@ test('GB18030 sidecar lyrics and synchronized embedded lyrics normalize to reada
       ],
     }],
   }), '[00:01.250]第一句\n[01:02.500]第二句');
+});
+
+test('UTF-8 metadata mojibake is repaired, including persisted records', () => {
+  assert.equal(normalizeMetadataText('ä¸­ææ­æ²'), '中文歌曲');
+});
+
+test('online lyrics are written beside persistent local music', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mineradio-local-lyric-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const audioPath = path.join(root, 'Cached.flac');
+  fs.writeFileSync(audioPath, Buffer.from('audio'));
+  const library = new LocalMusicLibrary({
+    userDataPath: path.join(root, 'profile'),
+    parseMetadata: async () => ({ common: { title: 'Cached', artist: 'Artist' }, format: { duration: 120 } }),
+  });
+  const imported = await library.importFiles([{ path: audioPath }]);
+  const localFileId = imported.tracks[0].localFileId;
+  assert.equal(fs.existsSync(path.join(root, LOCAL_LYRIC_DIRECTORY)), true);
+  const saved = await library.writeLyricForTrack(localFileId, '[00:01.000]Cached lyric');
+  const cachePath = path.join(root, LOCAL_LYRIC_DIRECTORY, `${localFileId}.lrc`);
+  assert.equal(saved.ok, true);
+  assert.equal(fs.readFileSync(cachePath, 'utf8'), '[00:01.000]Cached lyric');
+  assert.equal(library.lyricForTrack(localFileId).lyricSource, 'local-cache');
 });
 
 test('metadata and manifest failures preserve the last committed cover and index', async (t) => {
@@ -257,6 +297,7 @@ test('renderer and Electron wiring restore persistent tracks instead of blob-onl
   assert.doesNotMatch(main, /mineradio-local-library-read-sync/);
   assert.match(main, /await localMusicLibrary\.listTracks\(\)/);
   assert.match(main, /mineradio-local-library-lyric/);
+  assert.match(main, /mineradio-local-library-lyric-write/);
   assert.match(main, /mineradio-local-library-authorize/);
   assert.match(main, /localMusicImportCapabilities/);
   assert.match(main, /LOCAL_IMPORT_CAPABILITY_INVALID/);
@@ -266,6 +307,7 @@ test('renderer and Electron wiring restore persistent tracks instead of blob-onl
   assert.doesNotMatch(preload, /readLocalMusicLibrarySync/);
   assert.match(preload, /listLocalMusicLibrary/);
   assert.match(preload, /readLocalMusicLyric/);
+  assert.match(preload, /writeLocalMusicLyric/);
   assert.doesNotMatch(preload, /getPathForLocalFile:/);
   assert.doesNotMatch(preload, /mineradio-local-library-remove/);
   assert.match(upload, /importPersistentLocalAudioFiles/);
@@ -279,7 +321,24 @@ test('renderer and Electron wiring restore persistent tracks instead of blob-onl
   assert.match(startup, /Promise\.all\([\s\S]*persistedLocalLibraryRestorePromise/);
   assert.match(upload, /async function restorePersistedLocalLibrary/);
   assert.match(upload, /return -1;/);
+  assert.match(playback, /function restoreLocalQueueItemUrl\(song\)/);
+  assert.doesNotMatch(playback, /!song\.localUrl.*restoreLocalQueueItemUrl/);
+  assert.match(playback, /playQueue\[idx\] = restoreLocalQueueItemUrl\(playQueue\[idx\]\)/);
+  assert.match(playback, /restoreLocalQueueItemUrl\(currentLocalSong\)/);
+  assert.match(playback, /stored\.localUrl/);
+  const listenStats = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '02-listen-stats.js'), 'utf8');
+  const homeActions = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '05-home-actions.js'), 'utf8');
+  assert.match(listenStats, /localKey:\s*song\.localKey/);
+  assert.match(listenStats, /localFileId:\s*song\.localFileId/);
+  assert.match(homeActions, /localFileId:\s*record\.localFileId/);
+  const search = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '07-search.js'), 'utf8');
+  assert.match(search, /song\.provider === 'local'/);
   assert.match(playback, /readLocalMusicLyric\(song\.localFileId\)/);
+  assert.match(playback, /\/api\/lrclib\/lyric\?/);
+  assert.match(playback, /readPersistentLyricCache\(song\)/);
+  assert.match(playback, /writePersistentLyricCache\(song, payload\)/);
+  assert.match(playback, /writeLocalMusicLyric\(song\.localFileId, payload\.lyric\)/);
+  assert.match(fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '03a-home-dashboard.js'), 'utf8'), /home-library-open/);
   assert.match(cover, /mineradio-local:\\\/\\\/cover/);
   assert.equal(packageJson.dependencies['music-metadata'], '11.14.0');
 });

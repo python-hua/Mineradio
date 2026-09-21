@@ -8,6 +8,8 @@ const LOCAL_LIBRARY_VERSION = 1;
 const LOCAL_LIBRARY_FILE = 'local-music-library.json';
 const LOCAL_LIBRARY_DIRECTORY = 'local-music-library';
 const LOCAL_COVER_DIRECTORY = 'covers';
+const LOCAL_LYRIC_DIRECTORY = 'mineradio-lyrics';
+const LEGACY_LOCAL_LYRIC_DIRECTORY = '.mineradio-lyrics';
 const MAX_LIBRARY_INDEX_BYTES = 16 * 1024 * 1024;
 const MAX_LYRIC_BYTES = 512 * 1024;
 const MAX_COVER_BYTES = 6 * 1024 * 1024;
@@ -78,6 +80,27 @@ function supportedAudioPath(value) {
 function cleanText(value, fallback, maxLength = 1000) {
   const text = String(value == null ? '' : value).replace(/\0/g, '').trim();
   return (text || String(fallback || '')).slice(0, maxLength);
+}
+
+const LEGACY_METADATA_MARKERS = /[ÃÂÐÑÎÏÒÓÔÕÖ×ØÙÚÛÜÝÞß²³»¼½¾¿±ÄÅÆÇÈÉÊËÌÍÎÏàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþ]/;
+
+function cjkCharacterCount(value) {
+  return (String(value || '').match(/[\u3400-\u9fff]/g) || []).length;
+}
+
+function normalizeMetadataText(value) {
+  const text = String(value == null ? '' : value).replace(/\0/g, '').trim();
+  if (!text || !LEGACY_METADATA_MARKERS.test(text) || /[^\x00-\xff]/.test(text)) return text;
+  const source = Buffer.from(text, 'latin1');
+  const candidates = [];
+  try {
+    candidates.push(new TextDecoder('utf-8', { fatal: true }).decode(source).trim());
+  } catch (_) {}
+  try {
+    candidates.push(new TextDecoder('gb18030', { fatal: true }).decode(source).trim());
+  } catch (_) {}
+  const best = candidates.find((candidate) => candidate && cjkCharacterCount(candidate) > cjkCharacterCount(text));
+  return best || text;
 }
 
 function localFileId(filePath) {
@@ -237,6 +260,14 @@ function embeddedLyricText(common) {
   return '';
 }
 
+function localLyricPath(audioPath, id) {
+  return path.join(path.dirname(audioPath), LOCAL_LYRIC_DIRECTORY, `${id}.lrc`);
+}
+
+function legacyLocalLyricPath(audioPath, id) {
+  return path.join(path.dirname(audioPath), LEGACY_LOCAL_LYRIC_DIRECTORY, `${id}.lrc`);
+}
+
 function normalizeImportEntries(input) {
   const entries = [];
   const seen = new Set();
@@ -325,17 +356,17 @@ class LocalMusicLibrary {
           id,
           audioPath,
           relativePath: cleanText(source.relativePath, path.basename(audioPath), 2000),
-          name: cleanText(source.name, path.basename(audioPath, path.extname(audioPath)), 1000),
-          artist: cleanText(source.artist, '本地文件', 1000),
-          album: cleanText(source.album, '', 1000),
+          name: cleanText(normalizeMetadataText(source.name), path.basename(audioPath, path.extname(audioPath)), 1000),
+          artist: cleanText(normalizeMetadataText(source.artist), '本地文件', 1000),
+          album: cleanText(normalizeMetadataText(source.album), '', 1000),
           duration: Math.max(0, Number(source.duration) || 0),
           size: Math.max(0, Number(source.size) || 0),
           mtimeMs: Math.max(0, Number(source.mtimeMs) || 0),
           revision: cleanText(source.revision, '', 100),
           coverPath,
           coverMime: cleanText(source.coverMime, '', 100),
-          lyric: cleanText(source.lyric, '', MAX_LYRIC_BYTES),
-          lyricSource: source.lyricSource === 'sidecar' ? 'sidecar' : (source.lyricSource === 'embedded' ? 'embedded' : ''),
+          lyric: cleanText(normalizeMetadataText(source.lyric), '', MAX_LYRIC_BYTES),
+          lyricSource: ['sidecar', 'embedded', 'local-cache'].includes(source.lyricSource) ? source.lyricSource : '',
           importedAt: Math.max(0, Number(source.importedAt) || 0),
         };
         nextRecords.set(id, record);
@@ -369,7 +400,25 @@ class LocalMusicLibrary {
     };
   }
 
+  pruneMissingRecordsSync() {
+    const missingIds = this.order.filter((id) => {
+      const record = this.records.get(id);
+      if (!record || !record.audioPath) return true;
+      try { return !fs.statSync(record.audioPath).isFile(); } catch (_) { return true; }
+    });
+    if (!missingIds.length) return false;
+    const missing = new Set(missingIds);
+    for (const id of missingIds) {
+      const record = this.records.get(id);
+      if (record && record.coverPath) safeUnlink(record.coverPath);
+      this.records.delete(id);
+    }
+    this.order = this.order.filter((id) => !missing.has(id));
+    return true;
+  }
+
   listTracksSync() {
+    this.pruneMissingRecordsSync();
     const tracks = [];
     for (const id of this.order) {
       const record = this.records.get(id);
@@ -379,13 +428,14 @@ class LocalMusicLibrary {
   }
 
   async listTracks() {
-    const tracks = [];
-    for (let index = 0; index < this.order.length; index += 1) {
-      const record = this.records.get(this.order[index]);
-      if (record) tracks.push(this.serializeRecord(record));
-      if (index > 0 && index % 400 === 0) await new Promise((resolve) => setImmediate(resolve));
-    }
-    return { ok: true, version: LOCAL_LIBRARY_VERSION, count: tracks.length, tracks };
+    const operation = async () => {
+      const changed = this.pruneMissingRecordsSync();
+      if (changed) await this.persistSnapshot(this.order, this.records);
+      return this.listTracksSync();
+    };
+    const pending = this.mutation.then(operation, operation);
+    this.mutation = pending.catch(() => {});
+    return pending;
   }
 
   lyricForTrack(value) {
@@ -399,6 +449,36 @@ class LocalMusicLibrary {
       lyric: record.lyric || '',
       lyricSource: record.lyricSource || '',
     };
+  }
+
+  writeLyricForTrack(value, lyric) {
+    const id = cleanText(value, '', 64).replace(/^local:/, '').toLowerCase();
+    const text = normalizeMetadataText(lyric).slice(0, MAX_LYRIC_BYTES);
+    if (!/^[a-f0-9]{24}$/.test(id) || !text) {
+      return Promise.resolve({ ok: false, localFileId: id, error: 'LOCAL_LYRIC_INVALID' });
+    }
+    const operation = async () => {
+      const record = this.records.get(id);
+      if (!record) return { ok: false, localFileId: id, error: 'LOCAL_TRACK_MISSING' };
+      const directory = path.join(path.dirname(record.audioPath), LOCAL_LYRIC_DIRECTORY);
+      const target = localLyricPath(record.audioPath, id);
+      const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+      await fs.promises.mkdir(directory, { recursive: true });
+      try {
+        await fs.promises.writeFile(temporary, text, 'utf8');
+        await fs.promises.rename(temporary, target);
+        record.lyric = text;
+        record.lyricSource = 'local-cache';
+        await this.persistSnapshot(this.order, this.records);
+      } catch (error) {
+        safeUnlink(temporary);
+        throw error;
+      }
+      return this.lyricForTrack(id);
+    };
+    const pending = this.mutation.then(operation, operation);
+    this.mutation = pending.catch(() => {});
+    return pending;
   }
 
   async stageSnapshot(order, records) {
@@ -464,6 +544,7 @@ class LocalMusicLibrary {
       throw error;
     }
     const id = localFileId(entry.path);
+    await fs.promises.mkdir(path.dirname(localLyricPath(entry.path, id)), { recursive: true });
     const previous = this.records.get(id);
     let metadata = {};
     let metadataError = '';
@@ -475,7 +556,12 @@ class LocalMusicLibrary {
     const common = metadata.common || {};
     const format = metadata.format || {};
     const fallbackTitle = path.basename(entry.path, path.extname(entry.path));
-    const artists = Array.isArray(common.artists) ? common.artists.filter(Boolean).join(' / ') : '';
+    const artists = Array.isArray(common.artists)
+      ? common.artists.filter(Boolean).map(normalizeMetadataText).join(' / ')
+      : '';
+    const title = normalizeMetadataText(common.title);
+    const artist = normalizeMetadataText(common.artist || artists);
+    const album = normalizeMetadataText(common.album);
     const picture = Array.isArray(common.picture) && common.picture.length ? common.picture[0] : null;
     const cover = metadataError
       ? {
@@ -491,14 +577,28 @@ class LocalMusicLibrary {
       try {
         const lyricStat = await fs.promises.stat(sidecarPath);
         if (lyricStat.isFile() && lyricStat.size > 0 && lyricStat.size <= MAX_LYRIC_BYTES) {
-          lyric = decodeLyricBuffer(await fs.promises.readFile(sidecarPath)).slice(0, MAX_LYRIC_BYTES);
+          lyric = normalizeMetadataText(decodeLyricBuffer(await fs.promises.readFile(sidecarPath))).slice(0, MAX_LYRIC_BYTES);
           if (lyric) lyricSource = 'sidecar';
         }
       } catch (_) {}
     }
     if (!lyric) {
-      lyric = embeddedLyricText(common);
+      lyric = normalizeMetadataText(embeddedLyricText(common));
       if (lyric) lyricSource = 'embedded';
+    }
+    if (!lyric) {
+      try {
+        const cachedLyricPaths = [localLyricPath(entry.path, id), legacyLocalLyricPath(entry.path, id)];
+        for (const cachedLyricPath of cachedLyricPaths) {
+          const lyricStat = await fs.promises.stat(cachedLyricPath);
+          if (!lyricStat.isFile() || lyricStat.size <= 0 || lyricStat.size > MAX_LYRIC_BYTES) continue;
+          lyric = normalizeMetadataText(decodeLyricBuffer(await fs.promises.readFile(cachedLyricPath))).slice(0, MAX_LYRIC_BYTES);
+          if (lyric) {
+            lyricSource = 'local-cache';
+            break;
+          }
+        }
+      } catch (_) {}
     }
     if (!lyric && metadataError && previous && previous.lyric) {
       lyric = previous.lyric;
@@ -511,9 +611,9 @@ class LocalMusicLibrary {
         id,
         audioPath: entry.path,
         relativePath: entry.relativePath || path.basename(entry.path),
-        name: cleanText(common.title, metadataError && previous ? previous.name : fallbackTitle, 1000),
-        artist: cleanText(common.artist || artists, metadataError && previous ? previous.artist : '本地文件', 1000),
-        album: cleanText(common.album, metadataError && previous ? previous.album : fallbackAlbum, 1000),
+        name: cleanText(title, metadataError && previous ? previous.name : fallbackTitle, 1000),
+        artist: cleanText(artist, metadataError && previous ? previous.artist : '本地文件', 1000),
+        album: cleanText(album, metadataError && previous ? previous.album : fallbackAlbum, 1000),
         duration: Math.max(0, Number(format.duration) || (metadataError && previous ? Number(previous.duration) : 0) || 0),
         size: Math.max(0, Number(stat.size) || 0),
         mtimeMs: Math.max(0, Number(stat.mtimeMs) || 0),
@@ -719,12 +819,14 @@ class LocalMusicLibrary {
 
 module.exports = {
   AUDIO_MIME,
+  LOCAL_LYRIC_DIRECTORY,
   LOCAL_MUSIC_SCHEME,
   LocalMusicLibrary,
   coverWithinBudget,
   decodeLyricBuffer,
   embeddedImageDimensions,
   embeddedLyricText,
+  normalizeMetadataText,
   localFileId,
   parseByteRange,
   registerLocalMusicScheme,

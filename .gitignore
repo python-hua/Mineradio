@@ -16,6 +16,7 @@ win-unpacked/
 *.asar
 
 # User data and private state
+mineradio-local-audio-report.json
 .cookie
 .qq-cookie
 .kugou-cookie

@@ -100,7 +100,12 @@ const APP_PACKAGE_INFO = (() => {
   }
 })();
 const APP_METADATA = APP_PACKAGE_INFO.mineradio || {};
-const APP_NAME = process.env.MINERADIO_RUNTIME_NAME || APP_METADATA.runtimeName || APP_PACKAGE_INFO.productName || 'Mineradio';
+const IS_DEVELOPMENT_RUNTIME = process.defaultApp === true || process.env.MINERADIO_DEV_RUNTIME === '1';
+const APP_NAME = process.env.MINERADIO_RUNTIME_NAME
+  || (IS_DEVELOPMENT_RUNTIME ? `${APP_METADATA.runtimeName || APP_PACKAGE_INFO.productName || 'Mineradio'} Dev` : '')
+  || APP_METADATA.runtimeName
+  || APP_PACKAGE_INFO.productName
+  || 'Mineradio';
 const APP_USER_MODEL_ID = process.env.MINERADIO_APP_USER_MODEL_ID || APP_METADATA.appUserModelId || (APP_PACKAGE_INFO.build && APP_PACKAGE_INFO.build.appId) || 'com.mineradio.desktop';
 const APP_ICON_ICO = path.join(__dirname, '..', 'build', 'icon.ico');
 const CURRENT_FX_AUTOSAVE_FILE = 'current-fx-autosave.json';
@@ -4622,6 +4627,15 @@ ipcMain.handle('mineradio-local-library-lyric', async (event, localFileId) => {
   }
 });
 
+ipcMain.handle('mineradio-local-library-lyric-write', async (event, localFileId, lyric) => {
+  if (!isTrustedMainWindowIpc(event)) return { ok: false, lyric: '', lyricSource: '', error: 'UNTRUSTED_SENDER' };
+  try {
+    return await localMusicLibrary.writeLyricForTrack(localFileId, lyric);
+  } catch (error) {
+    return { ok: false, lyric: '', lyricSource: '', error: error.message || 'LOCAL_LYRIC_WRITE_FAILED' };
+  }
+});
+
 function pruneLocalMusicImportCapabilities() {
   const now = Date.now();
   for (const [token, capability] of localMusicImportCapabilities) {
@@ -4678,7 +4692,19 @@ ipcMain.handle('mineradio-local-library-import', async (event, payload = {}) => 
   }
   localMusicImportCapabilities.delete(token);
   try {
-    return await localMusicLibrary.importFiles(capability.files, { replace: false });
+    if (process.env.MINERADIO_DEBUG_LOCAL_IMPORT === '1') {
+      console.log('[LocalMusicDebug] capability.files', capability.files);
+    }
+    const result = await localMusicLibrary.importFiles(capability.files, { replace: false });
+    if (process.env.MINERADIO_DEBUG_LOCAL_IMPORT === '1') {
+      console.log('[LocalMusicDebug] import result', {
+        count: result.count,
+        tracks: result.tracks,
+        failures: result.failures,
+        metadataWarnings: result.metadataWarnings,
+      });
+    }
+    return result;
   } catch (error) {
     return { ok: false, count: 0, tracks: [], error: error.code || error.message || 'LOCAL_LIBRARY_IMPORT_FAILED' };
   }
@@ -5886,6 +5912,7 @@ async function createWindowOnce() {
   await loadMainWindowWithRetry(win);
   if (win.isDestroyed()) throw new Error('Main BrowserWindow was destroyed after navigation');
   startupCompleted = true;
+  console.log('[Mineradio] runtime data directory:', app.getPath('userData'));
   startMainWindowVisibilityGuard(win);
   showMainWindowSafely(win, 'navigation-complete');
   writeStartupState('ready', { readyAt: Date.now(), port: mainServerPort || Number(process.env.PORT) || 3000 });

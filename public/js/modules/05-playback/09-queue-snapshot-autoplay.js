@@ -81,6 +81,7 @@ function restoreLastPlaybackSnapshot() {
   startupRestoreHomePending = !startupAutoplayPreference;
   pendingPlaybackResumeAt = startupResumeSecondsFromSnapshot(snapshot);
   if (isLocal) {
+    current = restoreLocalQueueItemUrl(current) || current;
     currentLocalSong = current;
     currentIdx = -1;
     playQueue = [];
